@@ -19,7 +19,6 @@ import shutil
 import signal
 import subprocess as sp
 import sys
-import tarfile
 import tempfile
 import time
 from urllib.parse import urlencode
@@ -36,8 +35,8 @@ MON = "monitoring"
 UID = "cnels-basic-serving"
 os.umask(0o077)
 os.environ.update(AWS_DEFAULT_REGION=REGION, AWS_REGION=REGION, AWS_PAGER="")
-root = Path.home() / "cnels-basic-poc"
-root.mkdir(exist_ok=True)
+root = Path.home() / ".cache" / "cnels-basic-lab"
+root.mkdir(parents=True, exist_ok=True)
 lock = (root / "run.lock").open("a")
 try:
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -244,6 +243,7 @@ def gpu_plugin(chart):
         if ds["spec"]["template"]["spec"].get("nodeSelector",{}).get(NODE_LABEL) != GPU:
             patch = {"spec":{"template":{"spec":{"nodeSelector":{NODE_LABEL:GPU}}}}}
             k("-n","kube-system","patch","ds","nvidia-device-plugin-daemonset","--type=merge","-p",json.dumps(patch))
+        k("-n", "kube-system", "rollout", "status", "ds/nvidia-device-plugin-daemonset", "--timeout=4m", timeout=260)
     else:
         install(chart)
     def available():
@@ -476,7 +476,7 @@ def benchmarks(prom,panels):
             row[title+" (max sampled)"] = max(nums)
         save(files/"summary.json",row)
         rows.append(row)
-        note("PASS "+str(row))
+        note(f"동시 요청 {streams}개 완료 | {row['output_tokens_per_second']:.0f} tok/s")
     save(out/"comparison.json",rows)
 
 def main():
@@ -514,7 +514,11 @@ def main():
                 publish_dashboard(grafana,panels)
         else:
             benchmarks(prom,panels)
-            save(root/"latest-comparison.json",json.loads((out/"comparison.json").read_text()))
+            results = Path.home() / "cnels-basic-results"
+            results.mkdir(exist_ok=True)
+            comparison = results / "latest-comparison.json"
+            save(comparison, json.loads((out / "comparison.json").read_text()))
+            note("비교 결과 " + str(comparison))
 
 
 def stopped(signum, frame):
@@ -554,10 +558,10 @@ def entrypoint():
         if target_ok:
             diagnose()
     finally:
-        archive = out.with_suffix(".tar.gz")
-        with tarfile.open(archive,"w:gz") as tar:
-            tar.add(out,arcname="cnels-basic")
-        print("RESULT_FILE="+str(archive),flush=True)
+        if succeeded:
+            shutil.rmtree(out)
+        else:
+            print("진단 로그 " + str(out), flush=True)
     return 0 if succeeded else 1
 
 if __name__ == "__main__":
