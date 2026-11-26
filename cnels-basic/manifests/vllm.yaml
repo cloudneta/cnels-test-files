@@ -1,0 +1,73 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: llm
+  name: vllm
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/nodegroup: cnels-gpu
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      containers:
+      - name: vllm
+        image: vllm/vllm-openai:v0.32.0
+        args:
+        - "--model"
+        - Qwen/Qwen3-4B
+        - "--max-model-len"
+        - '4096'
+        - "--gpu-memory-utilization"
+        - '0.85'
+        ports:
+        - containerPort: 8000
+        startupProbe:
+          httpGet:
+            path: "/health"
+            port: 8000
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 90
+        readinessProbe:
+          httpGet:
+            path: "/health"
+            port: 8000
+          periodSeconds: 10
+          timeoutSeconds: 5
+        resources:
+          requests:
+            memory: 8Gi
+            nvidia.com/gpu: '1'
+          limits:
+            memory: 12Gi
+            nvidia.com/gpu: '1'
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm
+  namespace: llm
+  labels:
+    app: vllm
+spec:
+  selector:
+    app: vllm
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
